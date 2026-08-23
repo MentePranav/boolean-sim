@@ -137,6 +137,7 @@ File Index
 - `kmaps.js`            — K-Map solver, Gray-code mapper, toroidal grouping engine
 - `arithmetic.js`       — 1–4 bit Adders/Subtractors, ripple carry visualizer, 2's compl
 - `mux.js`              — Multiplexer simulator, signal bus visualizer, logic simplifier
+- `canvas.js`           — Kinetic background particle canvas engine
 - `test_modules.js`     — Automated unit test suite
 - `README.md`           — Complete project documentation
 - `CHANGES_SUMMARY.txt` — This summary file

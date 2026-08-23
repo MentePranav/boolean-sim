@@ -338,6 +338,18 @@
 
 </main>
 
+<!-- Floating Kinetic Background Toggle Switch -->
+<aside class="kinetic-toggle-container" aria-label="Background Animation Controls">
+  <label class="kinetic-switch" for="kinetic-bg-toggle" title="Toggle interactive physics-based background particles">
+    <input type="checkbox" id="kinetic-bg-toggle" aria-label="Toggle Kinetic Background Animation" />
+    <span class="kinetic-slider"></span>
+    <span class="kinetic-label"><span class="kinetic-icon">⚡</span> Kinetic Background</span>
+  </label>
+</aside>
+
+<!-- Full-screen Kinetic Background Canvas -->
+<canvas id="kinetic-canvas" class="kinetic-canvas" style="display: none;"></canvas>
+
 <footer>
   BoolSynth runs entirely in your browser — no data leaves your device. Minimization via Quine–McCluskey and Karnaugh Map prime-implicant extraction.
 </footer>
@@ -348,6 +360,7 @@
 <script src="kmaps.js"></script>
 <script src="arithmetic.js"></script>
 <script src="mux.js"></script>
+<script src="canvas.js"></script>
 <script src="ui.js"></script>
 </body>
 </html>

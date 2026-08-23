@@ -56,6 +56,14 @@ A client-side digital logic toolkit with zero build steps or external dependenci
 
 ---
 
+### 5. ⚡ Kinetic Background Engine (`canvas.js`)
+- **Physics-Based Particle System**: Interactive 2D particles drifting gently in the background with circuit constellation lines.
+- **Cursor Repulsion**: Particles smoothly dodge and accelerate away from the mouse cursor using inverse-distance force calculations.
+- **Click Energy Bursts**: Clicking on empty space spawns explosive particle bursts with decaying velocities and alpha trails.
+- **Zero-Footprint Toggle**: Controlled via a floating switch at the bottom-left. When toggled OFF, `requestAnimationFrame` stops, the canvas is hidden, and memory is released to guarantee 0% CPU/GPU overhead.
+
+---
+
 ## File Structure
 
 ```
@@ -65,6 +73,7 @@ A client-side digital logic toolkit with zero build steps or external dependenci
 ├── kmaps.js              — Karnaugh Map solver, Gray-code mapper, toroidal grouping, minimal cover
 ├── arithmetic.js         — 1–4 bit Adders/Subtractors, ripple carry visualizer, 2's complement logic
 ├── mux.js                — Multiplexer simulator, signal bus visualizer, Universal Logic builder
+├── canvas.js             — Kinetic background particle canvas engine
 ├── logic.js              — Expression parser, evaluator, Quine–McCluskey, NAND/NOR network builder
 ├── diagram.js            — SVG schematic renderer (auto-layout and wire routing)
 ├── app.js                — BoolSynth synthesizer controller
