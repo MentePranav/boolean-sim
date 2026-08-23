@@ -1,7 +1,8 @@
 /**
  * BoolSynth — Multiplexer Simulator Module
  * 2:1, 4:1, and 8:1 Multiplexers with dynamic signal routing, active path highlighting,
- * gate-level internal decoding array, truth table synchronization, and Universal Logic generator.
+ * gate-level internal decoding array, truth table synchronization, simplified Boolean expression
+ * synthesis, and Universal Logic generator.
  */
 (function () {
   'use strict';
@@ -14,9 +15,6 @@
   let dataInputs = [1, 0, 1, 1, 0, 1, 0, 0];
   // Select lines: [S2, S1, S0] MSB to LSB
   let selectInputs = [0, 1, 0];
-
-  // Universal logic generator state
-  let universalModeActive = false;
 
   const MUX_CONFIGS = {
     2: {
@@ -51,6 +49,126 @@
     }
   };
 
+  /* ===================== Minimization Engine ===================== */
+
+  /**
+   * Minimal Boolean expression solver for 1, 2, and 3 select variables.
+   * Utilizes window.BoolLogic if present, with a built-in exact solver fallback.
+   */
+  function simplifyMuxFunction(minterms, numVars, varNames) {
+    if (minterms.length === 0) return '0';
+    if (minterms.length === (1 << numVars)) return '1';
+
+    // If window.BoolLogic is available (from logic.js), use its full Quine-McCluskey engine
+    if (typeof window !== 'undefined' && window.BoolLogic && window.BoolLogic.minimize) {
+      try {
+        const res = window.BoolLogic.minimize(minterms, [], numVars, varNames);
+        if (res && res.sop && res.sop.str) {
+          return res.sop.str;
+        }
+      } catch (e) {
+        console.warn('BoolLogic minimization fallback:', e);
+      }
+    }
+
+    // Built-in exact Prime Implicant / Subcube minimization fallback
+    const totalCells = 1 << numVars;
+    const isMinterm = new Array(totalCells).fill(false);
+    minterms.forEach(m => isMinterm[m] = true);
+
+    // Generate all power-of-2 cubes
+    const primeImplicants = [];
+    const maxMask = (1 << numVars) - 1;
+
+    // Pattern: bit representation with -1 for dashes
+    function checkCube(fixedMask, fixedVals) {
+      for (let i = 0; i < totalCells; i++) {
+        if ((i & fixedMask) === fixedVals) {
+          if (!isMinterm[i]) return false;
+        }
+      }
+      return true;
+    }
+
+    // Check all possible subcubes
+    const validCubes = [];
+    for (let mask = 0; mask < (1 << numVars); mask++) {
+      for (let val = 0; val < (1 << numVars); val++) {
+        if ((val & ~mask) !== 0) continue; // Only consider bits defined by mask
+        if (checkCube(mask, val)) {
+          // Collect cells covered by this subcube
+          const coveredCells = [];
+          for (let i = 0; i < totalCells; i++) {
+            if ((i & mask) === val) coveredCells.push(i);
+          }
+          validCubes.push({ mask, val, size: coveredCells.length, cells: coveredCells });
+        }
+      }
+    }
+
+    // Filter prime implicants (not strictly subset of any larger valid cube)
+    const pis = validCubes.filter(c1 => {
+      const set1 = new Set(c1.cells);
+      return !validCubes.some(c2 => {
+        if (c2.size <= c1.size) return false;
+        const set2 = new Set(c2.cells);
+        return c1.cells.every(c => set2.has(c));
+      });
+    });
+
+    // Extract essential prime implicants and greedy cover
+    const uncovered = new Set(minterms);
+    const chosen = [];
+
+    // Essential PIs
+    minterms.forEach(m => {
+      const covering = pis.filter(pi => pi.cells.includes(m));
+      if (covering.length === 1) {
+        const epi = covering[0];
+        if (!chosen.includes(epi)) {
+          chosen.push(epi);
+          epi.cells.forEach(c => uncovered.delete(c));
+        }
+      }
+    });
+
+    // Greedy cover for remaining
+    const remaining = pis.filter(pi => !chosen.includes(pi));
+    while (uncovered.size > 0 && remaining.length > 0) {
+      remaining.sort((a, b) => {
+        const covA = a.cells.filter(c => uncovered.has(c)).length;
+        const covB = b.cells.filter(c => uncovered.has(c)).length;
+        if (covB !== covA) return covB - covA;
+        return b.size - a.size;
+      });
+      const best = remaining.shift();
+      const newCov = best.cells.filter(c => uncovered.has(c)).length;
+      if (newCov > 0) {
+        chosen.push(best);
+        best.cells.forEach(c => uncovered.delete(c));
+      }
+    }
+
+    if (chosen.length === 0) return '0';
+
+    // Format terms into string
+    const termStrings = chosen.map(cube => {
+      const lits = [];
+      for (let bit = 0; bit < numVars; bit++) {
+        const bitShift = numVars - 1 - bit;
+        const bitMask = 1 << bitShift;
+        if (cube.mask & bitMask) {
+          const bitVal = (cube.val >> bitShift) & 1;
+          const varName = varNames[bit];
+          lits.push(bitVal === 1 ? varName : varName + "'");
+        }
+      }
+      return lits.length === 0 ? '1' : lits.join('');
+    });
+
+    return termStrings.join(' + ');
+  }
+
   /* ===================== Logic Computation ===================== */
 
   function computeMux() {
@@ -74,15 +192,25 @@
 
     // Decoder minterms for internal gate array
     const minterms = [];
+    const activeMintermIndices = [];
     for (let i = 0; i < n; i++) {
       const isSelected = i === selDecimal;
       const andOutput = isEnabled && isSelected ? curData[i] : 0;
+      if (curData[i] === 1) activeMintermIndices.push(i);
       minterms.push({
         index: i,
         isSelected,
         dataVal: curData[i],
         andOutput
       });
+    }
+
+    // Compute simplified boolean expression
+    let simplifiedExpression;
+    if (!isEnabled) {
+      simplifiedExpression = '0 (Disabled via Strobe Ē=1)';
+    } else {
+      simplifiedExpression = simplifyMuxFunction(activeMintermIndices, k, cfg.selectNames);
     }
 
     return {
@@ -95,7 +223,9 @@
       isEnabled,
       routedValue,
       invertedValue,
-      minterms
+      minterms,
+      activeMintermIndices,
+      simplifiedExpression
     };
   }
 
@@ -194,11 +324,11 @@
 
               <!-- Enable Strobe (Active-low) -->
               <div class="bit-toggle-col" style="border-left:1px dashed var(--line); padding-left:12px;">
-                <span class="bit-name" style="color:var(--amber);">E (Strobe)</span>
+                <span class="bit-name" style="color:var(--amber);">Ē (Strobe)</span>
                 <button class="bit-toggle-btn mux-enable-btn ${enableActiveLow === 1 ? 'active-red' : 'active'}" id="mux-btn-enable">
                   ${enableActiveLow}
                 </button>
-                <span style="font-size:10px; color:var(--text-faint);">${enableActiveLow === 0 ? 'ON' : 'OFF'}</span>
+                <span style="font-size:10px; color:var(--text-faint);">${enableActiveLow === 0 ? '0 (ON)' : '1 (OFF)'}</span>
               </div>
             </div>
             <div class="hint" style="margin-top:6px;">
@@ -464,6 +594,7 @@
     const data = computeMux();
     const cfg = data.cfg;
 
+    // Build canonical term string
     const terms = [];
     for (let i = 0; i < data.n; i++) {
       const literals = [];
@@ -483,11 +614,22 @@
 
     const eqHtml = `
       <div class="expr-display">
-        <span class="lbl">SOP Multiplexer Signal Routing Equation</span>
-        <div>Y = Ē' · [ ${terms.join(' + ')} ]</div>
-        <div style="margin-top:8px; font-size:16px;">
+        <span class="lbl">Canonical SOP Multiplexer Routing Equation</span>
+        <div style="font-size:16px;">Y = Ē' · [ ${terms.join(' + ')} ]</div>
+
+        <div style="margin-top:14px; padding-top:12px; border-top:1px dashed var(--line);">
+          <span class="lbl">Simplified / Minimized Boolean Function (Given Current D<sub>0</sub>…D<sub>${data.n - 1}</sub>)</span>
+          <div style="color:var(--signal); font-size:22px; font-weight:700;">
+            Y = ${data.simplifiedExpression}
+          </div>
+          <div style="font-size:12px; color:var(--text-dim); margin-top:4px;">
+            Minterms active: <code>Σm(${data.activeMintermIndices.join(', ') || '∅'})</code>
+          </div>
+        </div>
+
+        <div style="margin-top:14px; font-size:15px;">
           Current Output: <strong style="color:var(--signal); font-size:22px;">Y = ${data.isEnabled ? data.routedValue : 0}</strong>
-          ${!data.isEnabled ? ' <span style="font-size:12px; color:var(--red);">(Strobe Disabled)</span>' : ` <span style="font-size:13px; color:var(--text-dim);">(Routed from D<sub>${data.selDecimal}</sub> = ${data.routedValue})</span>`}
+          ${!data.isEnabled ? ' <span style="font-size:12px; color:var(--red);">(Strobe Disabled)</span>' : ` <span style="font-size:13px; color:var(--text-dim);">(Select S = ${data.selBits.join('')}<sub>2</sub>, Routed from D<sub>${data.selDecimal}</sub> = ${data.routedValue})</span>`}
         </div>
       </div>
     `;
@@ -501,31 +643,49 @@
     {
       name: 'AND Gate: F(A, B) = A · B (using 4:1 MUX)',
       size: 4,
-      desc: 'Select lines S1=A, S0=B. Inputs: D0=0, D1=0, D2=0, D3=1.',
+      canonical: 'F(A, B) = Σm(3)',
+      simplified: 'A · B',
+      desc: 'Select lines S1=A, S0=B. Set Data inputs: D0=0, D1=0, D2=0, D3=1.',
       data: [0, 0, 0, 1]
     },
     {
       name: 'OR Gate: F(A, B) = A + B (using 4:1 MUX)',
       size: 4,
-      desc: 'Select lines S1=A, S0=B. Inputs: D0=0, D1=1, D2=1, D3=1.',
+      canonical: 'F(A, B) = Σm(1, 2, 3)',
+      simplified: 'A + B',
+      desc: 'Select lines S1=A, S0=B. Set Data inputs: D0=0, D1=1, D2=1, D3=1.',
       data: [0, 1, 1, 1]
     },
     {
       name: 'XOR Gate: F(A, B) = A ⊕ B (using 4:1 MUX)',
       size: 4,
-      desc: 'Select lines S1=A, S0=B. Inputs: D0=0, D1=1, D2=1, D3=0.',
+      canonical: 'F(A, B) = Σm(1, 2)',
+      simplified: "A'B + AB'",
+      desc: 'Select lines S1=A, S0=B. Set Data inputs: D0=0, D1=1, D2=1, D3=0.',
       data: [0, 1, 1, 0]
+    },
+    {
+      name: 'XNOR Gate: F(A, B) = (A ⊕ B)\' (using 4:1 MUX)',
+      size: 4,
+      canonical: 'F(A, B) = Σm(0, 3)',
+      simplified: "A'B' + AB",
+      desc: 'Select lines S1=A, S0=B. Set Data inputs: D0=1, D1=0, D2=0, D3=1.',
+      data: [1, 0, 0, 1]
     },
     {
       name: 'Full Adder Sum: F(A, B, C) (using 8:1 MUX)',
       size: 8,
-      desc: 'Select lines S2=A, S1=B, S0=C. Inputs: D1, D2, D4, D7 = 1; others = 0.',
+      canonical: 'F(A, B, C) = Σm(1, 2, 4, 7)',
+      simplified: "A'B'C + A'BC' + AB'C' + ABC",
+      desc: 'Select lines S2=A, S1=B, S0=C. Set Data inputs: D1, D2, D4, D7 = 1; others = 0.',
       data: [0, 1, 1, 0, 1, 0, 0, 1]
     },
     {
       name: 'Majority Vote (2 of 3): F(A, B, C) (using 8:1 MUX)',
       size: 8,
-      desc: 'Select lines S2=A, S1=B, S0=C. Inputs: D3, D5, D6, D7 = 1; others = 0.',
+      canonical: 'F(A, B, C) = Σm(3, 5, 6, 7)',
+      simplified: 'AB + AC + BC',
+      desc: 'Select lines S2=A, S1=B, S0=C. Set Data inputs: D3, D5, D6, D7 = 1; others = 0.',
       data: [0, 0, 0, 1, 0, 1, 1, 1]
     }
   ];
@@ -553,7 +713,15 @@
 
       const descBox = document.getElementById('mux-universal-desc');
       if (descBox) {
-        descBox.innerHTML = `<div class="hint" style="color:var(--signal); margin-top:8px;">${p.desc}</div>`;
+        descBox.innerHTML = `
+          <div style="background:var(--bg-alt); border:1px solid var(--line); border-radius:4px; padding:12px 16px; margin-top:10px;">
+            <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:6px;">
+              <div><span class="lbl-inline">Canonical Form:</span> <strong style="color:var(--amber);">${p.canonical}</strong></div>
+              <div><span class="lbl-inline">Minimized Function:</span> <strong style="color:var(--signal); font-size:15px;">${p.simplified}</strong></div>
+            </div>
+            <div class="hint" style="color:var(--text); margin-top:4px;">${p.desc}</div>
+          </div>
+        `;
       }
 
       renderTypeSelector();
@@ -570,6 +738,13 @@
       });
     }
   }
+
+  // Export helper for automated test suites
+  window.BoolMux = {
+    simplifyMuxFunction,
+    computeMux,
+    UNIVERSAL_PRESETS
+  };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initMuxModule);

@@ -1,20 +1,21 @@
 /**
  * BoolSynth — Binary Arithmetic Engine Module
  * 1-bit to 4-bit Binary Adders & Subtractors, Half/Full Adders & Subtractors,
- * 2's Complement Adder-Subtractor with interactive bitwise inputs and carry ripple visualizer.
+ * 2's Complement Adder-Subtractor with interactive bitwise inputs, dynamic carry/borrow toggle,
+ * and ripple carry visualizer.
  */
 (function () {
   'use strict';
 
   // Sub-modules state
-  let currentSubTab = 'multibit'; // 'multibit', 'ha', 'fa', 'hs', 'fs'
+  let currentSubTab = 'multibit'; // 'multibit', 'fa', 'ha', 'fs', 'hs'
   let multiBitWidth = 4;          // 1, 2, 3, 4
   let multiBitMode = 'add';       // 'add' or 'sub'
 
   // Multi-bit inputs
   let bitsA = [0, 1, 0, 1];       // [A3, A2, A1, A0] MSB to LSB
   let bitsB = [0, 0, 1, 1];       // [B3, B2, B1, B0]
-  let cinBit = 0;                 // 0 or 1
+  let cinBit = 0;                 // 0 or 1 (interactive in both ADD and SUB)
 
   // Discrete 1-bit gate states
   let haState = { a: 1, b: 1 };
@@ -57,6 +58,10 @@
     return { diff, bout, axorb, notA, notAxorB, term1, term2 };
   }
 
+  /**
+   * Multi-Bit Ripple Carry Adder / Subtractor Calculation
+   * Supports dynamic interactive Cin in both ADD and SUB modes.
+   */
   function computeMultiBit() {
     const n = multiBitWidth;
     // Extract active bits (LSB is at index n-1)
@@ -64,9 +69,9 @@
     const bVals = bitsB.slice(4 - n);
 
     const isSub = multiBitMode === 'sub';
-    const effectiveCin = isSub ? 1 : cinBit;
+    const effectiveCin = cinBit; // Dynamic 0 or 1 in both modes
 
-    // Process from LSB to MSB
+    // Process ripple carry chain from LSB (stage 0) to MSB (stage n-1)
     const stages = [];
     let currentCarry = effectiveCin;
 
@@ -74,7 +79,7 @@
       const bitIndex = (n - 1) - i; // 0 is LSB, n-1 is MSB
       const a = aVals[i];
       const bOriginal = bVals[i];
-      // In subtract mode, B is inverted via XOR with M (1)
+      // In subtract mode (M=1), B is inverted via XOR: B_i ^ 1 = ~B_i
       const bEffective = isSub ? (bOriginal ^ 1) : bOriginal;
 
       const fa = computeFullAdder(a, bEffective, currentCarry);
@@ -92,15 +97,16 @@
     }
 
     const sumBits = stages.map(s => s.sum);
-    const coutFinal = currentCarry;
+    const coutFinal = currentCarry; // Carry out of MSB Full Adder (C_n)
+    const boutFinal = isSub ? (coutFinal === 1 ? 0 : 1) : (coutFinal); // In subtraction, Bout = ~C_n
 
     // Numerical conversions
     const valA = parseInt(aVals.join(''), 2);
     const valB = parseInt(bVals.join(''), 2);
-    const valSumUnsigned = parseInt(sumBits.join(''), 2) + (coutFinal ? (1 << n) : 0);
     const rawSumVal = parseInt(sumBits.join(''), 2);
+    const valSumUnsigned = isSub ? rawSumVal : (rawSumVal + (coutFinal ? (1 << n) : 0));
 
-    // Signed 2's complement interpretation
+    // Signed 2's complement interpretation: range [ -2^(n-1) to 2^(n-1)-1 ]
     function toSigned(bits) {
       const val = parseInt(bits.join(''), 2);
       const msb = bits[0];
@@ -114,13 +120,29 @@
     const signedB = toSigned(bVals);
     const signedSum = toSigned(sumBits);
 
-    // Overflow detection: V = C_n ^ C_{n-1}
+    // True mathematical result
+    let trueMathSigned;
+    let operationFormula;
+    if (!isSub) {
+      trueMathSigned = signedA + signedB + effectiveCin;
+      operationFormula = `A + B + Cin = ${signedA} + ${signedB} + ${effectiveCin} = ${trueMathSigned}`;
+    } else {
+      if (effectiveCin === 1) {
+        trueMathSigned = signedA - signedB;
+        operationFormula = `A + ~B + 1 = A − B = ${signedA} − ${signedB} = ${trueMathSigned} (2's Complement Subtraction)`;
+      } else {
+        trueMathSigned = signedA - signedB - 1;
+        operationFormula = `A + ~B + 0 = A − B − 1 = ${signedA} − ${signedB} − 1 = ${trueMathSigned} (1's Complement / Subtract with Borrow)`;
+      }
+    }
+
+    // Signed Overflow Flag: V = C_n ^ C_{n-1}
     const cN = stages[0].cout; // Carry out of MSB
     const cNminus1 = stages[0].cin; // Carry into MSB
     const overflow = (cN ^ cNminus1) === 1;
 
-    // Zero and Negative flags
-    const zeroFlag = rawSumVal === 0 && !coutFinal;
+    // Status Flags
+    const zeroFlag = rawSumVal === 0;
     const negFlag = sumBits[0] === 1;
 
     return {
@@ -132,6 +154,7 @@
       stages,
       sumBits,
       coutFinal,
+      boutFinal,
       valA,
       valB,
       valSumUnsigned,
@@ -139,6 +162,8 @@
       signedA,
       signedB,
       signedSum,
+      trueMathSigned,
+      operationFormula,
       overflow,
       zeroFlag,
       negFlag
@@ -158,11 +183,11 @@
     if (!navContainer) return;
     navContainer.innerHTML = `
       <div class="tabs">
-        <button class="arith-tab-btn ${currentSubTab === 'multibit' ? 'active' : ''}" data-tab="multibit">1–4 Bit Adder / Subtractor</button>
-        <button class="arith-tab-btn ${currentSubTab === 'fa' ? 'active' : ''}" data-tab="fa">Full Adder (1-Bit)</button>
-        <button class="arith-tab-btn ${currentSubTab === 'ha' ? 'active' : ''}" data-tab="ha">Half Adder (1-Bit)</button>
-        <button class="arith-tab-btn ${currentSubTab === 'fs' ? 'active' : ''}" data-tab="fs">Full Subtractor (1-Bit)</button>
-        <button class="arith-tab-btn ${currentSubTab === 'hs' ? 'active' : ''}" data-tab="hs">Half Subtractor (1-Bit)</button>
+        <button class="tab-btn arith-tab-btn ${currentSubTab === 'multibit' ? 'active' : ''}" data-tab="multibit">1–4 Bit Adder / Subtractor</button>
+        <button class="tab-btn arith-tab-btn ${currentSubTab === 'fa' ? 'active' : ''}" data-tab="fa">Full Adder (1-Bit)</button>
+        <button class="tab-btn arith-tab-btn ${currentSubTab === 'ha' ? 'active' : ''}" data-tab="ha">Half Adder (1-Bit)</button>
+        <button class="tab-btn arith-tab-btn ${currentSubTab === 'fs' ? 'active' : ''}" data-tab="fs">Full Subtractor (1-Bit)</button>
+        <button class="tab-btn arith-tab-btn ${currentSubTab === 'hs' ? 'active' : ''}" data-tab="hs">Half Subtractor (1-Bit)</button>
       </div>
     `;
 
@@ -259,30 +284,32 @@
             </div>
           </div>
 
-          <!-- Carry In (if in ADD mode) -->
-          ${multiBitMode === 'add' ? `
-            <div class="arith-operand-card cin-card">
-              <div class="card-head">
-                <span class="card-title">Initial Carry In (C<sub>in</sub>)</span>
+          <!-- Carry / Borrow In Toggle (Dynamic in both ADD and SUB modes) -->
+          <div class="arith-operand-card cin-card">
+            <div class="card-head">
+              <span class="card-title">${data.isSub ? 'Carry In / Inverted Borrow (C<sub>in</sub>)' : 'Initial Carry In (C<sub>in</sub>)'}</span>
+              <span class="card-badge">${data.isSub ? (cinBit === 1 ? "2's Compl (Cin=1)" : "1's Compl (Cin=0)") : `C0 = ${cinBit}`}</span>
+            </div>
+            <div class="bit-switches-row">
+              <div class="bit-toggle-col">
+                <span class="bit-weight">C<sub>0</sub></span>
+                <button class="bit-toggle-btn ${cinBit === 1 ? 'active' : ''}" data-op="CIN" data-idx="0">${cinBit}</button>
+                <span class="bit-name">C<sub>in</sub></span>
               </div>
-              <div class="bit-switches-row">
-                <div class="bit-toggle-col">
-                  <span class="bit-weight">C<sub>0</sub></span>
-                  <button class="bit-toggle-btn ${cinBit === 1 ? 'active' : ''}" data-op="CIN" data-idx="0">${cinBit}</button>
-                  <span class="bit-name">C<sub>in</sub></span>
-                </div>
+              <div style="font-size:12px; color:var(--text-dim); line-height:1.4; padding-left:8px; border-left:1px dashed var(--line);">
+                ${data.isSub ? `
+                  ${cinBit === 1 ? '<strong>C<sub>in</sub>=1:</strong> Standard 2\'s Complement Subtraction (A − B).' : '<strong>C<sub>in</sub>=0:</strong> 1\'s Complement / Subtract with Borrow (A − B − 1).'}
+                ` : `
+                  ${cinBit === 1 ? 'Carry In is active (adds +1 to LSB).' : 'Normal addition (C<sub>in</sub> = 0).'}
+                `}
               </div>
             </div>
-          ` : `
-            <div class="arith-operand-card cin-card">
-              <div class="card-head">
-                <span class="card-title">Subtractor Mode (M = 1)</span>
-              </div>
-              <div style="font-size:12.5px; color:var(--amber); line-height:1.4;">
-                C<sub>in</sub> set to <strong>1</strong>.<br/>B bits inverted with XOR gates.
-              </div>
-            </div>
-          `}
+          </div>
+        </div>
+
+        <!-- Active Operation Formula Banner -->
+        <div style="background:var(--bg-alt); border:1px solid var(--line); border-radius:4px; padding:12px 18px; margin-bottom:20px; font-family:var(--font-data); font-size:13px; color:var(--amber);">
+          <strong>Active Formula:</strong> <span style="color:var(--text);">${data.operationFormula}</span>
         </div>
 
         <!-- Ripple Carry Stage Visualizer -->
@@ -291,8 +318,6 @@
         </h3>
         <div class="ripple-slices-container">
           ${data.stages.map((stage, idx) => {
-            const isMSB = idx === 0;
-            const isLSB = idx === data.stages.length - 1;
             return `
               <div class="fa-slice-box">
                 <div class="fa-slice-header">FA<sub>${stage.bitIndex}</sub> (Bit ${stage.bitIndex})</div>
@@ -333,11 +358,11 @@
               <span class="card-title">Binary Calculation Breakdown</span>
             </div>
             <pre class="binary-math-pre">
-   Carry:   ${data.stages.map(s => s.cin).join('  ')}  ${data.effectiveCin}
-       A:   ${data.aVals.join('  ')}   (${data.valA})
- ${data.isSub ? '−' : '+'}     B:   ${data.bVals.join('  ')}   (${data.valB})
+   Carry/C_in:   ${data.stages.map(s => s.cin).join('  ')}  ${data.effectiveCin}
+            A:   ${data.aVals.join('  ')}   (${data.valA})
+ ${data.isSub ? '−' : '+'}          B:   ${data.bVals.join('  ')}   (${data.valB}) ${data.isSub ? ` [~B: ${data.stages.map(s => s.bEffective).join(' ')}]` : ''}
 -----------------------
-  Result: ${data.coutFinal ? `(${data.coutFinal}) ` : '    '}${data.sumBits.join('  ')}   (${data.isSub ? data.signedSum : data.valSumUnsigned})
+       Result: ${data.coutFinal ? `(${data.coutFinal}) ` : '    '}${data.sumBits.join('  ')}   (Dec: ${data.isSub ? data.signedSum : data.valSumUnsigned})
             </pre>
           </div>
 
@@ -352,33 +377,41 @@
                 <span class="l">${data.isSub ? 'Difference' : 'Sum'} (Binary)</span>
               </div>
               <div class="stat">
-                <span class="n">${data.isSub ? data.signedSum : data.valSumUnsigned}</span>
-                <span class="l">Decimal Output</span>
+                <span class="n">${data.signedSum}</span>
+                <span class="l">Signed 2's Compl</span>
               </div>
               <div class="stat">
-                <span class="n">${data.coutFinal}</span>
+                <span class="n">${data.isSub ? data.boutFinal : data.coutFinal}</span>
                 <span class="l">${data.isSub ? 'Borrow Out (Bout)' : 'Carry Out (Cout)'}</span>
               </div>
             </div>
 
             <div class="flags-row">
               <span class="flag-badge ${data.overflow ? 'flag-alert' : 'flag-normal'}">
-                <strong>V (Overflow):</strong> ${data.overflow ? '1 (TRIGGERED)' : '0 (OK)'}
+                <strong>V (Signed Overflow):</strong> ${data.overflow ? '1 (TRIGGERED)' : '0 (OK)'}
               </span>
               <span class="flag-badge ${data.zeroFlag ? 'flag-active' : 'flag-normal'}">
-                <strong>Z (Zero):</strong> ${data.zeroFlag ? '1' : '0'}
+                <strong>Z (Zero Flag):</strong> ${data.zeroFlag ? '1' : '0'}
               </span>
               <span class="flag-badge ${data.negFlag ? 'flag-active' : 'flag-normal'}">
-                <strong>N (Negative):</strong> ${data.negFlag ? '1' : '0'}
+                <strong>N (Negative Flag):</strong> ${data.negFlag ? '1' : '0'}
+              </span>
+              <span class="flag-badge flag-normal">
+                <strong>C<sub>n</sub> (MSB Carry):</strong> ${data.coutFinal}
               </span>
             </div>
 
-            ${data.isSub ? `
-              <div class="hint" style="margin-top:12px; color:var(--text-dim); line-height:1.45;">
-                <strong>2's Complement Logic:</strong> Subtraction is performed as <code>A + (~B) + 1</code>.<br/>
+            <div class="hint" style="margin-top:12px; color:var(--text-dim); line-height:1.45;">
+              ${data.isSub ? `
+                <strong>Subtraction Logic:</strong> Evaluated as <code>A + (~B) + Cin</code>.<br/>
+                ${data.coutFinal === 1 ? '<span style="color:var(--signal);">✓ C<sub>n</sub> = 1 → No borrow required (A ≥ B). Borrow Out B<sub>out</sub> = 0.</span>' : '<span style="color:var(--amber);">⚠ C<sub>n</sub> = 0 → Borrow required (A < B). Borrow Out B<sub>out</sub> = 1.</span>'}<br/>
                 Signed range for ${n}-bit: <strong>${-(1 << (n - 1))} to +${(1 << (n - 1)) - 1}</strong>.
-              </div>
-            ` : ''}
+              ` : `
+                <strong>Addition Logic:</strong> Evaluated as <code>A + B + Cin</code>.<br/>
+                Signed range for ${n}-bit: <strong>${-(1 << (n - 1))} to +${(1 << (n - 1)) - 1}</strong>. Unsigned total: <strong>${data.valSumUnsigned}</strong>.
+              `}
+              ${data.overflow ? `<div style="color:var(--red); margin-top:4px; font-weight:700;">⚠ Signed Overflow: True math result (${data.trueMathSigned}) exceeds ${n}-bit signed range [${-(1 << (n - 1))}, +${(1 << (n - 1)) - 1}].</div>` : ''}
+            </div>
           </div>
         </div>
       </div>
@@ -398,6 +431,12 @@
     container.querySelectorAll('.arith-mode-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         multiBitMode = btn.dataset.mode;
+        // When switching to sub mode default Cin to 1 (standard 2's compl), when switching to add mode default Cin to 0
+        if (multiBitMode === 'sub' && cinBit === 0) {
+          cinBit = 1;
+        } else if (multiBitMode === 'add' && cinBit === 1) {
+          cinBit = 0;
+        }
         renderMultiBitView();
       });
     });
@@ -788,6 +827,15 @@
       });
     }
   }
+
+  // Export helper for automated test suites
+  window.BoolArithmetic = {
+    computeHalfAdder,
+    computeFullAdder,
+    computeHalfSubtractor,
+    computeFullSubtractor,
+    computeMultiBit
+  };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initArithmeticModule);
